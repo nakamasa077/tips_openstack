@@ -1,0 +1,361 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+
+  "Description" : "AWS CloudFormation Sample Template",
+
+  "Parameters" : {
+
+    "KeyName" : {
+      "Description" : "Name of an existing EC2 KeyPair to enable SSH access to the instances",
+      "Type" : "String"
+    },
+
+    "InstanceType" : {
+      "Description" : "WebServer EC2 instance type",
+      "Type" : "String",
+      "Default" : "m1.small",
+      "AllowedValues" : [ "t1.micro", "m1.small", "m1.large", "m1.xlarge", "m2.xlarge", "m2.2xlarge", "m2.4xlarge", "c1.medium", "c1.xlarge", "cc1.4xlarge" ],
+      "ConstraintDescription" : "must be a valid EC2 instance type."
+    },
+
+    "DBName": {
+      "Default": "redmine",
+      "Description" : "The Redmine database name",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "64",
+      "AllowedPattern" : "[a-zA-Z][a-zA-Z0-9]*",
+      "ConstraintDescription" : "must begin with a letter and contain only alphanumeric characters."
+    },
+
+    "DBUsername": {
+      "Default": "redmine",
+      "NoEcho": "true",
+      "Description" : "The Redmine database admin account username",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "16",
+      "AllowedPattern" : "[a-zA-Z][a-zA-Z0-9]*",
+      "ConstraintDescription" : "must begin with a letter and contain only alphanumeric characters."
+    },
+
+    "DBPassword": {
+      "Default": "redmine",
+      "NoEcho": "true",
+      "Description" : "The Redmine database admin account password",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "41",
+      "AllowedPattern" : "[a-zA-Z0-9]*",
+      "ConstraintDescription" : "must contain only alphanumeric characters."
+    },
+
+    "DBRootPassword": {
+      "Default": "admin",
+      "NoEcho": "true",
+      "Description" : "Root password for MySQL",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "41",
+      "AllowedPattern" : "[a-zA-Z0-9]*",
+      "ConstraintDescription" : "must contain only alphanumeric characters."
+    },
+
+    "LinuxDistribution": {
+      "Default": "U10",
+      "Description" : "Distribution of choice",
+      "Type": "String",
+      "AllowedValues" : [ "U10", "U12" ]
+    }
+  },
+
+  "Mappings" : {
+    "AWSInstanceType2Arch" : {
+      "t1.micro"    : { "Arch" : "32" },
+      "m1.small"    : { "Arch" : "64" },
+      "m1.large"    : { "Arch" : "64" },
+      "m1.xlarge"   : { "Arch" : "64" },
+      "m2.xlarge"   : { "Arch" : "64" },
+      "m2.2xlarge"  : { "Arch" : "64" },
+      "m2.4xlarge"  : { "Arch" : "64" },
+      "c1.medium"   : { "Arch" : "32" },
+      "c1.xlarge"   : { "Arch" : "64" },
+      "cc1.4xlarge" : { "Arch" : "64" }
+    },
+    "DistroArch2AMI": {
+      "U10"      : { "32" : "U10-i386-cfntools", "64" : "U10-x86_64-cfntools" },
+      "U12"      : { "32" : "U12-i386-cfntools", "64" : "U12-x86_64-cfntools" }
+    }
+  },
+
+  "Resources" : {
+    "CfnUser" : {
+      "Type" : "AWS::IAM::User"
+    },
+    "WebServerKeys" : {
+      "Type" : "AWS::IAM::AccessKey",
+      "Properties" : {
+        "UserName" : {"Ref": "CfnUser"}
+      }
+    },
+    "WebServerGroup" : {
+      "Type" : "AWS::AutoScaling::AutoScalingGroup",
+      "Properties" : {
+        "AvailabilityZones" : { "Fn::GetAZs" : ""},
+        "LaunchConfigurationName" : { "Ref" : "LaunchConfig" },
+        "MinSize" : "1",
+        "MaxSize" : "3",
+        "DesiredCapacity" : "2",
+        "LoadBalancerNames" : [ { "Ref" : "ElasticLoadBalancer" } ]
+      }
+    },
+
+    "WebServerScaleUpPolicy" : {
+      "Type" : "AWS::AutoScaling::ScalingPolicy",
+      "Properties" : {
+        "AdjustmentType" : "ChangeInCapacity",
+        "AutoScalingGroupName" : { "Ref" : "WebServerGroup" },
+        "Cooldown" : "60",
+        "ScalingAdjustment" : "1"
+      }
+    },
+
+    "WebServerScaleDownPolicy" : {
+      "Type" : "AWS::AutoScaling::ScalingPolicy",
+      "Properties" : {
+        "AdjustmentType" : "ChangeInCapacity",
+        "AutoScalingGroupName" : { "Ref" : "WebServerGroup" },
+        "Cooldown" : "60",
+        "ScalingAdjustment" : "-1"
+      }
+    },
+
+    "MEMAlarmHigh": {
+     "Type": "AWS::CloudWatch::Alarm",
+     "Properties": {
+        "AlarmDescription": "Scale-up if MEM > 50% for 1 minute",
+        "MetricName": "MemoryUtilization",
+        "Namespace": "system/linux",
+        "Statistic": "Average",
+        "Period": "60",
+        "EvaluationPeriods": "1",
+        "Threshold": "50",
+        "AlarmActions": [ { "Ref": "WebServerScaleUpPolicy" } ],
+        "Dimensions": [
+          {
+            "Name": "AutoScalingGroupName",
+            "Value": { "Ref": "WebServerGroup" }
+          }
+        ],
+        "ComparisonOperator": "GreaterThanThreshold"
+      }
+    },
+    "MEMAlarmLow": {
+     "Type": "AWS::CloudWatch::Alarm",
+     "Properties": {
+        "AlarmDescription": "Scale-down if MEM < 15% for 1 minute",
+        "MetricName": "MemoryUtilization",
+        "Namespace": "system/linux",
+        "Statistic": "Average",
+        "Period": "60",
+        "EvaluationPeriods": "1",
+        "Threshold": "15",
+        "AlarmActions": [ { "Ref": "WebServerScaleDownPolicy" } ],
+        "Dimensions": [
+          {
+            "Name": "AutoScalingGroupName",
+            "Value": { "Ref": "WebServerGroup" }
+          }
+        ],
+        "ComparisonOperator": "LessThanThreshold"
+      }
+    },
+
+    "ElasticLoadBalancer" : {
+      "Type" : "AWS::ElasticLoadBalancing::LoadBalancer",
+      "Properties" : {
+        "AvailabilityZones" : { "Fn::GetAZs" : "" },
+        "Listeners" : [ {
+          "LoadBalancerPort" : "80",
+          "InstancePort" : "80",
+          "Protocol" : "HTTP"
+        } ],
+        "HealthCheck" : {
+          "Target" : "HTTP:80/",
+          "HealthyThreshold" : "3",
+          "UnhealthyThreshold" : "5",
+          "Interval" : "30",
+          "Timeout" : "5"
+        }
+      }
+    },
+
+    "DatabaseServer": {
+      "Type": "AWS::EC2::Instance",
+      "Metadata" : {
+        "AWS::CloudFormation::Init" : {
+          "config" : {
+            "services" : {
+              "sysvinit" : {
+                "mysql"    : { "enabled" : "true", "ensureRunning" : "true" }
+              }
+            }
+          }
+        }
+      },
+      "Properties": {
+        "ImageId" : { "Fn::FindInMap" : [ "DistroArch2AMI", { "Ref" : "LinuxDistribution" },
+                          { "Fn::FindInMap" : [ "AWSInstanceType2Arch", { "Ref" : "InstanceType" }, "Arch" ] } ] },
+        "InstanceType"   : { "Ref" : "InstanceType" },
+        "KeyName"        : { "Ref" : "KeyName" },
+        "UserData"       : { "Fn::Base64" : { "Fn::Join" : ["", [
+          "#!/bin/bash -v\n",
+          "/opt/aws/bin/cfn-init\n",
+          "apt-get -y update\n",
+          "echo mysql-server mysql-server/root_password select ", { "Ref" : "DBRootPassword" }, " | debconf-set-selections\n",
+          "echo mysql-server mysql-server/root_password_again select ", { "Ref" : "DBRootPassword" }, " | debconf-set-selections\n",
+          "apt-get -y install mysql-server\n",
+          "sed -i -e 's/127.0.0.1/0.0.0.0/g' /etc/mysql/my.cnf\n",
+          "service mysql restart\n",
+          "mysql -uroot -p", { "Ref" : "DBRootPassword" }, " -e \"CREATE DATABASE redmine CHARACTER SET utf8;\"\n",
+          "mysql -uroot -p", { "Ref" : "DBRootPassword" }, " -e \"GRANT ALL PRIVILEGES ON redmine.* TO 'redmine'@'%' IDENTIFIED BY '", { "Ref" : "DBPassword" }, "';\"\n"
+        ]]}}
+      }
+    },
+
+    "LaunchConfig" : {
+      "Type" : "AWS::AutoScaling::LaunchConfiguration",
+      "DependsOn": "DatabaseServer",
+      "Metadata" : {
+        "AWS::CloudFormation::Init" : {
+          "config" : {
+            "files" : {
+              "/etc/cfn/cfn-credentials" : {
+                "content" : { "Fn::Join" : ["", [
+                  "AWSAccessKeyId=", { "Ref" : "WebServerKeys" }, "\n",
+                  "AWSSecretKey=", {"Fn::GetAtt": ["WebServerKeys",
+                                    "SecretAccessKey"]}, "\n"
+                ]]},
+                "mode"    : "000400",
+                "owner"   : "root",
+                "group"   : "root"
+              },
+              "/tmp/httpd.conf" : {
+                "content" : { "Fn::Join" : ["", [
+                "LoadModule passenger_module /var/lib/gems/1.9.1/gems/passenger-3.0.17/ext/apache2/mod_passenger.so\n",
+                "PassengerRoot /var/lib/gems/1.9.1/gems/passenger-3.0.17\n",
+                "PassengerRuby /usr/bin/ruby1.9.1\n"
+                  ]]},
+                "mode"  : "000644",
+                "owner" : "root",
+                "group" : "root"
+              },
+              "/tmp/default" : {
+                "content" : { "Fn::Join" : ["", [
+                "<VirtualHost *:80>\n",
+                "  ServerAdmin webmaster@localhost\n",
+                "  DocumentRoot /usr/src/www\n",
+                "  ErrorDocument 404 /404.html\n",
+                "  <Directory />\n",
+                "    Options FollowSymLinks\n",
+                "    AllowOverride None\n",
+                "  </Directory>\n",
+                "  <Directory /usr/src/www/>\n",
+                "    Options Indexes FollowSymLinks MultiViews\n",
+                "    AllowOverride None\n",
+                "    Order allow,deny\n",
+                "    allow from all\n",
+                "  </Directory>\n",
+                "  <Directory /usr/src/redmine/public>\n",
+                "    Options Indexes FollowSymLinks MultiViews\n",
+                "    AllowOverride None\n",
+                "    Order allow,deny\n",
+                "    allow from all\n",
+                "  </Directory>\n",
+                "  ErrorLog /var/log/apache2/error.log\n",
+                "  LogLevel warn\n",
+                "  CustomLog /var/log/apache2/access.log combined\n",
+                "  ServerSignature On\n",
+                "  RailsBaseURI /redmine\n",
+                "</VirtualHost>\n"
+                  ]]},
+                "mode"  : "000644",
+                "owner" : "root",
+                "group" : "root"
+              },
+              "/tmp/stats-crontab.txt" : {
+                "content" : { "Fn::Join" : ["", [
+                "MAIL=\"\"\n",
+                "\n",
+                "* * * * * /opt/aws/bin/cfn-push-stats --watch ",
+                { "Ref" : "MEMAlarmHigh" }, " --mem-util\n",
+                "* * * * * /opt/aws/bin/cfn-push-stats --watch ",
+                { "Ref" : "MEMAlarmLow" }, " --mem-util\n"
+                ]]},
+                "mode"    : "000600",
+                "owner"   : "root",
+                "group"   : "root"
+              }
+            },
+            "services" : {
+              "sysvinit" : {
+                "apache2"  : { "enabled" : "true", "ensureRunning" : "true" },
+                "cron"     : { "enabled" : "true", "ensureRunning" : "true" }
+              }
+            }
+          }
+        }
+      },
+      "Properties": {
+        "ImageId" : { "Fn::FindInMap" : [ "DistroArch2AMI", { "Ref" : "LinuxDistribution" },
+                          { "Fn::FindInMap" : [ "AWSInstanceType2Arch", { "Ref" : "InstanceType" }, "Arch" ] } ] },
+        "InstanceType"   : { "Ref" : "InstanceType" },
+        "KeyName"        : { "Ref" : "KeyName" },
+        "UserData"       : { "Fn::Base64" : { "Fn::Join" : ["", [
+          "#!/bin/bash -v\n",
+          "/opt/aws/bin/cfn-init -s ", { "Ref" : "AWS::StackName" },
+          " -r LaunchConfig ",
+          " --region ", { "Ref" : "AWS::Region" }, "\n",
+
+          "apt-get -y update\n",
+          "apt-get -y install ruby1.9.3\n",
+          "apt-get -y install rubygems\n",
+          "gem install rails --no-ri --no-rdoc -v 3.2.6\n",
+          "apt-get -y install apache2 libapache2-mod-passenger\n",
+          "gem install passenger --no-ri --no-rdoc -v 3.0.17\n",
+          "passenger-install-apache2-module --auto\n",
+          "apt-get -y install libcurl4-openssl-dev apache2-prefork-dev\n",
+          "gem install mysql2\n",
+
+          "cd /usr/src && wget https://github.com/redmine/redmine/archive/2.0.4.tar.gz && tar zxvf 2.0.4.tar.gz\n",
+          "mv /usr/src/redmine-2.0.4/ /usr/src/redmine/\n",
+          "cp /usr/src/redmine/config/database.yml.example /usr/src/redmine/config/database.yml\n",
+          "sed -i -e '1,/adapter: mysql/s/adapter: mysql/adapter: mysql2/' -e '1,/host: localhost/s/host: localhost/host: ", { "Fn::GetAtt" : [ "DatabaseServer", "PublicIp" ]}, "/' -e '1,/username: root/s/username: root/username: redmine/' -e '1,/password:/s/password:/password: ", { "Ref" : "DBPassword" }, "/' /usr/src/redmine/config/database.yml\n",
+          "cd /usr/src/redmine/ && gem install bundler\n",
+          "sed -i -e '1,/gem \"mysql\"/s/gem \"mysql\"/gem \"mysql2\", \"~> 0.3.11\"/' /usr/src/redmine/Gemfile\n",
+          "bundle install --without development test rmagick\n",
+          "rake generate_secret_token\n",
+          "cd /usr/src/redmine/ && RAILS_ENV=production rake db:migrate\n",
+
+          "mv /tmp/httpd.conf /etc/apache2/httpd.conf\n",
+          "rm /etc/apache2/sites-available/default\n",
+          "mv /tmp/default /etc/apache2/sites-available/default\n",
+          "mkdir /usr/src/www\n",
+          "ln -s /usr/src/redmine/public /usr/src/www/redmine\n",
+          "chown -R www-data:www-data /usr/src/redmine/\n",
+          "service apache2 restart\n",
+
+          "# install crontab\n",
+          "crontab /tmp/stats-crontab.txt\n"
+        ]]}}
+      }
+    }
+  },
+
+  "Outputs" : {
+    "URL" : {
+      "Description" : "The URL of the website",
+      "Value" :  { "Fn::Join" : [ "", [ "http://", { "Fn::GetAtt" : [ "ElasticLoadBalancer", "DNSName" ]}, "/redmine"]] }
+    }
+  }
+}
