@@ -148,8 +148,8 @@
           "gem install rails --no-ri --no-rdoc -v 3.2.6\n",
           "apt-get -y install apache2 libapache2-mod-passenger\n",
           "gem install passenger --no-ri --no-rdoc -v 3.0.17\n",
-          "passenger-install-apache2-module --auto\n",
           "apt-get -y install libcurl4-openssl-dev apache2-prefork-dev\n",
+          "passenger-install-apache2-module --auto\n",
           "gem install mysql2\n",
           "cd /usr/src && wget https://github.com/redmine/redmine/archive/2.0.4.tar.gz && tar zxvf 2.0.4.tar.gz\n",
           "mv /usr/src/redmine-2.0.4/ /usr/src/redmine/\n",
@@ -198,6 +198,7 @@
           "ln -s /usr/src/redmine/public /usr/src/www/redmine\n",
           "/opt/aws/bin/cfn-init\n",
           "chown -R www-data:www-data /usr/src/redmine/\n",
+          "a2dismod passenger\n",
           "service apache2 restart\n"
         ]]}}
       }
